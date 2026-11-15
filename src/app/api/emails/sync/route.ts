@@ -46,7 +46,8 @@ export async function POST(req: Request) {
         const { data: created, error: leadErr } = await supabaseAdmin
           .from("leads")
           .insert({
-            company_name: msg.fromName ?? msg.fromAddress,
+            company_name: msg.fromName || msg.fromAddress,
+            contact_name: msg.fromName || msg.fromAddress,
             contact_email: msg.fromAddress,
             specs: {},
           })

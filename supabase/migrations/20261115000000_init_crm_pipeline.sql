@@ -181,3 +181,17 @@ create policy "authenticated full access quotations" on public.quotations
   for all to authenticated using (true) with check (true);
 create policy "authenticated full access audits" on public.audits
   for all to authenticated using (true) with check (true);
+
+-- DEV ONLY: the portal currently has no Supabase Auth, so the browser client
+-- connects as the `anon` role. These policies let the UI read/write data.
+-- Remove or tighten before any public deployment.
+do $$
+declare t text;
+begin
+  foreach t in array array['leads','email_threads','email_messages','quotations','audits'] loop
+    execute format(
+      'create policy "anon dev access %I" on public.%I for all to anon using (true) with check (true)',
+      t, t
+    );
+  end loop;
+end $$;
