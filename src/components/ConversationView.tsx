@@ -40,8 +40,11 @@ export default function ConversationView({ thread, emails, lead, onSent }: Props
 
   if (!thread) {
     return (
-      <section style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#888" }}>
-        Select a thread to view the conversation
+      <section className="flex-1 flex items-center justify-center bg-slate-50">
+        <div className="text-center text-slate-400">
+          <div className="text-5xl mb-3">✉️</div>
+          <p className="text-sm">Select a conversation to read and reply</p>
+        </div>
       </section>
     );
   }
@@ -115,67 +118,101 @@ export default function ConversationView({ thread, emails, lead, onSent }: Props
   };
 
   return (
-    <section style={{ flex: 2, display: "flex", flexDirection: "column", borderRight: "1px solid #ddd" }}>
-      <header style={{ padding: "12px 16px", borderBottom: "1px solid #ddd" }}>
-        <strong>{thread.subject}</strong>
+    <section className="flex-1 flex flex-col bg-slate-100 min-w-0">
+      {/* Conversation header */}
+      <header className="px-6 py-4 bg-white border-b border-slate-200">
+        <h2 className="text-base font-semibold text-slate-900 truncate">{thread.subject}</h2>
+        <p className="text-xs text-slate-500 mt-0.5">
+          {lead?.company_name} · {lead?.contact_email}
+        </p>
       </header>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
-        {emails.map((email) => (
-          <article
-            key={email.id}
-            style={{
-              marginBottom: 16,
-              padding: 12,
-              borderRadius: 8,
-              background: email.direction === "inbound" ? "#f4f4f4" : "#eef4ff",
-            }}
-          >
-            <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
-              {email.direction === "inbound" ? "←" : "→"} {email.sender_email} →{" "}
-              {email.recipient_email} · {new Date(email.sent_at).toLocaleString()}
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+        {emails.length === 0 && (
+          <p className="text-center text-sm text-slate-400 py-10">No messages in this thread yet</p>
+        )}
+        {emails.map((email) => {
+          const inbound = email.direction === "inbound";
+          return (
+            <div key={email.id} className={`flex ${inbound ? "justify-start" : "justify-end"}`}>
+              <article
+                className={`max-w-xl rounded-2xl px-4 py-3 shadow-sm ${
+                  inbound
+                    ? "bg-white border border-slate-200 text-slate-800 rounded-tl-sm"
+                    : "bg-blue-600 text-white rounded-tr-sm"
+                }`}
+              >
+                <div
+                  className={`flex items-center gap-2 text-[11px] mb-1.5 ${
+                    inbound ? "text-slate-500" : "text-blue-100"
+                  }`}
+                >
+                  <span className="font-semibold">
+                    {inbound ? email.sender_email : "You"}
+                  </span>
+                  <span>→</span>
+                  <span className="truncate">{email.recipient_email}</span>
+                  <span className="ml-auto shrink-0">
+                    {new Date(email.sent_at).toLocaleString()}
+                  </span>
+                </div>
+                <div className="text-sm whitespace-pre-wrap leading-relaxed">
+                  {email.body_text ?? email.body_html}
+                </div>
+              </article>
             </div>
-            <div style={{ whiteSpace: "pre-wrap" }}>{email.body_text ?? email.body_html}</div>
-          </article>
-        ))}
+          );
+        })}
       </div>
 
-      <footer style={{ padding: 12, borderTop: "1px solid #ddd" }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-          <label style={{ fontSize: 12, color: "#666" }}>Template:</label>
-          <select
-            value=""
-            onChange={(e) => e.target.value && applyTemplate(e.target.value)}
-            style={{ flex: 1 }}
-          >
-            <option value="">Insert template…</option>
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <input
-          value={subject}
-          onChange={(e) => setSubject(e.target.value)}
-          placeholder="Subject"
-          style={{ width: "100%", marginBottom: 8, padding: "6px 8px" }}
-        />
-        <textarea
-          value={reply}
-          onChange={(e) => setReply(e.target.value)}
-          placeholder="Write a reply or pick a template above — edit freely before sending..."
-          rows={6}
-          style={{ width: "100%", marginBottom: 8 }}
-        />
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button onClick={() => sendReply("eml")} disabled={sending || !reply.trim()}>
-            Download .eml
-          </button>
-          <button onClick={() => sendReply()} disabled={sending || !reply.trim() || !subject.trim()}>
-            {sending ? "Sending..." : "Send email"}
-          </button>
+      {/* Composer */}
+      <footer className="px-6 py-4 bg-white border-t border-slate-200">
+        <div className="max-w-3xl mx-auto space-y-2">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-500 shrink-0">Template</label>
+            <select
+              value=""
+              onChange={(e) => e.target.value && applyTemplate(e.target.value)}
+              className="text-sm border border-slate-300 rounded-lg px-2 py-1.5 bg-white flex-1"
+            >
+              <option value="">Insert template…</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <input
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            placeholder="Subject"
+            className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <textarea
+            value={reply}
+            onChange={(e) => setReply(e.target.value)}
+            placeholder="Write a reply or pick a template above — edit freely before sending…"
+            rows={5}
+            className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => sendReply("eml")}
+              disabled={sending || !reply.trim()}
+              className="text-sm px-4 py-2 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Download .eml
+            </button>
+            <button
+              onClick={() => sendReply()}
+              disabled={sending || !reply.trim() || !subject.trim()}
+              className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-50"
+            >
+              {sending ? "Sending…" : "Send email"}
+            </button>
+          </div>
         </div>
       </footer>
     </section>
