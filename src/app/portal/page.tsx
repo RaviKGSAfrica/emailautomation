@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import ThreadList from "@/components/ThreadList";
 import ConversationView from "@/components/ConversationView";
 import DealActionPanel from "@/components/DealActionPanel";
@@ -133,6 +134,12 @@ export default function AuditCrmPortal() {
           {syncResult && (
             <span className="text-xs text-slate-300 max-w-xs truncate">{syncResult}</span>
           )}
+          <Link
+            href="/dashboard"
+            className="text-sm font-medium px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors"
+          >
+            Dashboard
+          </Link>
           <button
             onClick={syncInbox}
             disabled={syncing}
