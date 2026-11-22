@@ -1,14 +1,41 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { sendSmtpEmail, composeRawEmail } from "@/lib/mailer";
+import { uploadAttachment, type AttachmentMeta } from "@/lib/storage";
+
+interface IncomingAttachment {
+  name: string;
+  contentType?: string;
+  data: string; // base64
+}
+
+function textToHtml(text: string): string {
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return `<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.6;white-space:pre-wrap">${escaped}</div>`;
+}
 
 export async function POST(req: Request) {
-  const { threadId, leadId, toEmail, subject, bodyText, quoteId, format } = await req.json();
+  const {
+    threadId,
+    leadId,
+    toEmail,
+    subject,
+    bodyText,
+    bodyHtml,
+    quoteId,
+    format,
+    attachments,
+  } = await req.json();
 
   const from = process.env.SMTP_USER ?? "audits@yourdomain.com";
-  let finalBody = bodyText ?? "";
+  let quoteSuffix = "";
 
-  // If attaching a quote, mark it SENT and append a 1-click acceptance link
+  // If attaching a quote, mark it SENT and append the details.
+  // NOTE: no links of any kind are included in outbound emails —
+  // clients approve by replying. Nothing in this system is exposed to them.
   if (quoteId) {
     const { data: quote } = await supabaseAdmin
       .from("quotations")
@@ -18,14 +45,23 @@ export async function POST(req: Request) {
       .single();
 
     if (quote) {
-      const acceptUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/quotes/accept?token=${quote.approval_token}`;
-      finalBody += `\n\n---\nQuote #${quote.quote_number} (${quote.mandays} Man-Days | $${quote.total_amount})\nClick here to approve quote and initiate audit scheduling: ${acceptUrl}`;
+      quoteSuffix = `\n\n---\nQuotation ${quote.quote_number}: ${quote.mandays} man-days | $${quote.total_amount}\nTo approve, simply reply to this email and we'll schedule your audit.`;
     }
 
     if (leadId) {
       await supabaseAdmin.from("leads").update({ stage: "QUOTED" }).eq("id", leadId);
     }
   }
+
+  const finalBody = (bodyText ?? "") + quoteSuffix;
+  const html =
+    (bodyHtml?.trim() ? bodyHtml : textToHtml(bodyText ?? "")) + textToHtml(quoteSuffix);
+
+  const outgoingAttachments = (attachments as IncomingAttachment[] | undefined)?.map((a) => ({
+    filename: a.name,
+    content: Buffer.from(a.data, "base64"),
+    contentType: a.contentType,
+  }));
 
   // .eml download mode: compose the raw RFC-822 message without sending
   if (format === "eml") {
@@ -34,6 +70,8 @@ export async function POST(req: Request) {
       to: toEmail,
       subject,
       text: finalBody,
+      html,
+      attachments: outgoingAttachments,
     });
     return new NextResponse(eml, {
       headers: {
@@ -51,6 +89,8 @@ export async function POST(req: Request) {
       to: toEmail,
       subject,
       text: finalBody,
+      html,
+      attachments: outgoingAttachments,
     });
     providerMessageId = result.messageId;
   } catch (err) {
@@ -84,13 +124,34 @@ export async function POST(req: Request) {
       recipient_email: toEmail,
       subject,
       body_text: finalBody,
+      body_html: html,
       provider_message_id: providerMessageId,
       sent_at: new Date().toISOString(),
     })
-    .select()
+    .select("id")
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Store copies of outbound attachments in the shared bucket
+  if (outgoingAttachments?.length && savedMsg?.id) {
+    const metas: AttachmentMeta[] = [];
+    for (const att of outgoingAttachments) {
+      const meta = await uploadAttachment(
+        resolvedThreadId,
+        att.filename,
+        att.content,
+        att.contentType
+      );
+      if (meta) metas.push(meta);
+    }
+    if (metas.length) {
+      await supabaseAdmin
+        .from("email_messages")
+        .update({ attachments: metas })
+        .eq("id", savedMsg.id);
+    }
+  }
 
   await supabaseAdmin
     .from("email_threads")

@@ -43,10 +43,9 @@ KGS Africa`,
 Please find below our quotation for the audit engagement:
 
 {{#quoteDetails}}Quote: {{quoteNumber}}{{#mandays}} | {{mandays}} man-days{{/mandays}}{{#totalAmount}} | ${"$"}{{totalAmount}}{{/totalAmount}}
-{{/quoteDetails}}{{#quoteLink}}You can review and approve this quotation here:
-{{quoteLink}}
+{{/quoteDetails}}To approve this quotation, simply reply to this email and we'll get the audit scheduled.
 
-{{/quoteLink}}If you have any questions or would like to adjust the scope, just reply to this email.
+If you have any questions or would like to adjust the scope, just reply to this email.
 
 Best regards,
 Audit Team
@@ -60,8 +59,7 @@ KGS Africa`,
 
 I wanted to follow up on the quotation we sent over for {{companyName}}. Has your team had a chance to review it?
 
-If everything looks good, you can approve it directly here:
-{{quoteLink}}
+If everything looks good, just reply to this email and we'll get the audit scheduled — no forms or portals needed.
 
 Happy to jump on a quick call if you'd like to discuss any details.
 

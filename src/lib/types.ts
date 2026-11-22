@@ -22,6 +22,13 @@ export interface EmailThread {
   created_at: string;
 }
 
+export interface AttachmentMeta {
+  name: string;
+  path: string;
+  contentType?: string;
+  size?: number;
+}
+
 export interface EmailMessage {
   id: string;
   thread_id: string;
@@ -31,8 +38,17 @@ export interface EmailMessage {
   subject: string | null;
   body_text: string | null;
   body_html: string | null;
+  attachments: AttachmentMeta[];
   provider_message_id: string | null;
   sent_at: string;
+  created_at: string;
+}
+
+export interface ThreadNote {
+  id: string;
+  thread_id: string;
+  author: string;
+  body: string;
   created_at: string;
 }
 
@@ -41,9 +57,11 @@ export interface Quotation {
   lead_id: string;
   quote_number: string;
   approval_token: string;
+  currency?: string;
   mandays: number;
   total_amount: number;
   status: "DRAFT" | "SENT" | "ACCEPTED" | "REJECTED" | "EXPIRED";
+  is_active?: boolean;
   sent_at: string | null;
   accepted_at: string | null;
   expires_at: string | null;

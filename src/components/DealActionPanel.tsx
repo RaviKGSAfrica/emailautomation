@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase";
-import type { Audit, EmailThread, Lead, Quotation } from "@/lib/types";
+import type { Audit, EmailThread, Lead, Quotation, ThreadNote } from "@/lib/types";
 
 interface Props {
   lead: Lead | null;
@@ -30,6 +30,8 @@ export default function DealActionPanel({ lead, thread, onLeadUpdated }: Props) 
   const [audits, setAudits] = useState<Audit[]>([]);
   const [amount, setAmount] = useState("0");
   const [mandays, setMandays] = useState("1");
+  const [notes, setNotes] = useState<ThreadNote[]>([]);
+  const [noteBody, setNoteBody] = useState("");
 
   useEffect(() => {
     if (!lead) {
@@ -50,6 +52,35 @@ export default function DealActionPanel({ lead, thread, onLeadUpdated }: Props) 
       .order("created_at", { ascending: false })
       .then(({ data }) => setAudits((data as Audit[] | null) ?? []));
   }, [lead, supabase]);
+
+  // Team notes for the selected thread (internal only — never emailed)
+  useEffect(() => {
+    if (!thread) {
+      setNotes([]);
+      return;
+    }
+    supabase
+      .from("thread_notes")
+      .select("*")
+      .eq("thread_id", thread.id)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => setNotes((data as ThreadNote[] | null) ?? []));
+  }, [thread, supabase]);
+
+  const addNote = async () => {
+    if (!thread || !noteBody.trim()) return;
+    const author =
+      typeof window !== "undefined"
+        ? localStorage.getItem("portal-author") || "team"
+        : "team";
+    const { data } = await supabase
+      .from("thread_notes")
+      .insert({ thread_id: thread.id, author, body: noteBody.trim() })
+      .select()
+      .single();
+    if (data) setNotes((prev) => [data as ThreadNote, ...prev]);
+    setNoteBody("");
+  };
 
   if (!lead) {
     return (
@@ -74,10 +105,28 @@ export default function DealActionPanel({ lead, thread, onLeadUpdated }: Props) 
     onLeadUpdated();
   };
 
+  // Select which quotation is used for follow-up emails & dashboard analytics
+  const selectQuote = async (quoteId: string) => {
+    await supabase.from("quotations").update({ is_active: false }).eq("lead_id", lead.id);
+    await supabase.from("quotations").update({ is_active: true }).eq("id", quoteId);
+    const { data } = await supabase
+      .from("quotations")
+      .select("*")
+      .eq("lead_id", lead.id)
+      .order("created_at", { ascending: false });
+    setQuotes((data as Quotation[] | null) ?? []);
+  };
+
   const createQuote = async () => {
     if (!thread) return;
+    const quoteNumber = `QT-${new Date().getFullYear()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)
+      .toUpperCase()}`;
     await supabase.from("quotations").insert({
       lead_id: lead.id,
+      quote_number: quoteNumber,
+      currency: "USD",
       mandays: Number(mandays) || 0,
       total_amount: Number(amount) || 0,
     });
@@ -174,24 +223,59 @@ export default function DealActionPanel({ lead, thread, onLeadUpdated }: Props) 
             >
               <div className="flex justify-between items-center">
                 <span className="font-mono font-medium text-slate-700">{q.quote_number}</span>
-                <span
-                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                    q.status === "ACCEPTED"
-                      ? "bg-emerald-100 text-emerald-700"
-                      : q.status === "SENT"
-                        ? "bg-blue-100 text-blue-700"
-                        : "bg-slate-200 text-slate-600"
-                  }`}
-                >
-                  {q.status}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {q.is_active && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700">
+                      ★ follow-up
+                    </span>
+                  )}
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                      q.status === "ACCEPTED"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : q.status === "SENT"
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-slate-200 text-slate-600"
+                    }`}
+                  >
+                    {q.status}
+                  </span>
+                </div>
               </div>
+              {!q.is_active && q.status !== "ACCEPTED" && (
+                <button
+                  onClick={() => selectQuote(q.id)}
+                  className="mt-1.5 text-[10px] text-blue-600 hover:underline"
+                >
+                  Use for follow-up →
+                </button>
+              )}
+              {(q.status === "SENT" || q.status === "DRAFT") && (
+                <button
+                  onClick={async () => {
+                    await supabase
+                      .from("quotations")
+                      .update({ status: "ACCEPTED", accepted_at: new Date().toISOString() })
+                      .eq("id", q.id);
+                    const { data } = await supabase
+                      .from("quotations")
+                      .select("*")
+                      .eq("lead_id", lead.id)
+                      .order("created_at", { ascending: false });
+                    setQuotes((data as Quotation[] | null) ?? []);
+                    onLeadUpdated();
+                  }}
+                  className="mt-1.5 ml-2 text-[10px] text-emerald-600 hover:underline"
+                >
+                  ✓ Mark accepted (client replied)
+                </button>
+              )}
               <div className="text-slate-600 mt-1">
                 {q.mandays} man-days · ${Number(q.total_amount).toLocaleString()}
               </div>
               {q.status === "SENT" && q.approval_token && (
                 <div className="mt-1.5 text-[10px] text-blue-600 break-all font-mono">
-                  /api/quotes/accept?token={q.approval_token.slice(0, 12)}…
+                  /api/quotes/track?token={q.approval_token.slice(0, 12)}…&e=click
                 </div>
               )}
             </div>
@@ -240,6 +324,39 @@ export default function DealActionPanel({ lead, thread, onLeadUpdated }: Props) 
           ))}
         </div>
       </Card>
+
+      {thread && (
+        <Card title="Team notes (internal)">
+          <div className="space-y-2 mb-3 max-h-48 overflow-y-auto">
+            {notes.length === 0 && (
+              <p className="text-xs text-slate-400">No internal notes yet</p>
+            )}
+            {notes.map((n) => (
+              <div key={n.id} className="text-xs bg-amber-50 border border-amber-100 rounded-lg p-2">
+                <div className="flex justify-between text-[10px] text-slate-400 mb-0.5">
+                  <span className="font-semibold text-amber-700">{n.author}</span>
+                  <span>{new Date(n.created_at).toLocaleString()}</span>
+                </div>
+                <p className="text-slate-700 whitespace-pre-wrap">{n.body}</p>
+              </div>
+            ))}
+          </div>
+          <textarea
+            value={noteBody}
+            onChange={(e) => setNoteBody(e.target.value)}
+            placeholder="Add an internal note (not sent to client)…"
+            rows={2}
+            className="w-full text-xs border border-slate-300 rounded-lg px-2 py-1.5 mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            onClick={addNote}
+            disabled={!noteBody.trim()}
+            className="w-full text-xs font-medium px-3 py-1.5 rounded-lg bg-slate-700 text-white hover:bg-slate-600 disabled:opacity-50"
+          >
+            Add note
+          </button>
+        </Card>
+      )}
     </aside>
   );
 }

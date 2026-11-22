@@ -1,6 +1,13 @@
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 
+export interface SyncedAttachment {
+  filename: string;
+  contentType: string;
+  size: number;
+  content: Buffer;
+}
+
 export interface SyncedEmail {
   messageId: string | null;
   fromAddress: string;
@@ -10,6 +17,7 @@ export interface SyncedEmail {
   date: Date;
   text: string | null;
   html: string | null;
+  attachments: SyncedAttachment[];
 }
 
 // Connects to the configured IMAP mailbox (mail.kgsafrica.com:993) and returns
@@ -69,6 +77,14 @@ export async function fetchInboxMessages(limit = 50): Promise<SyncedEmail[]> {
           date,
           text: parsed.text ?? null,
           html: typeof parsed.html === "string" ? parsed.html : null,
+          attachments: (parsed.attachments ?? [])
+            .filter((a) => a.filename && a.content)
+            .map((a) => ({
+              filename: a.filename!,
+              contentType: a.contentType ?? "application/octet-stream",
+              size: a.size ?? a.content!.length,
+              content: a.content as Buffer,
+            })),
         });
       }
     } finally {

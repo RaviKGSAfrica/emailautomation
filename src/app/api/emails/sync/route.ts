@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { fetchInboxMessages } from "@/lib/mailbox";
+import { uploadAttachment, type AttachmentMeta } from "@/lib/storage";
 
 // Pulls recent messages from the IMAP inbox and syncs them into
 // email_threads / email_messages, matched to leads by sender address.
@@ -76,23 +77,47 @@ export async function POST(req: Request) {
         threadId = thread.id;
       }
 
-      const { error: msgErr } = await supabaseAdmin.from("email_messages").insert({
-        thread_id: threadId,
-        direction: "inbound",
-        sender_email: msg.fromAddress,
-        recipient_email: msg.toAddress,
-        subject: msg.subject,
-        body_text: msg.text,
-        body_html: msg.html,
-        provider_message_id: msg.messageId,
-        sent_at: msg.date.toISOString(),
-      });
+      const { data: saved, error: msgErr } = await supabaseAdmin
+        .from("email_messages")
+        .insert({
+          thread_id: threadId,
+          direction: "inbound",
+          sender_email: msg.fromAddress,
+          recipient_email: msg.toAddress,
+          subject: msg.subject,
+          body_text: msg.text,
+          body_html: msg.html,
+          provider_message_id: msg.messageId,
+          sent_at: msg.date.toISOString(),
+        })
+        .select("id")
+        .single();
 
       if (msgErr) {
         // 23505 = unique violation on provider_message_id → already synced
         if (msgErr.code === "23505") skipped++;
         else errors.push(`${msg.fromAddress}: ${msgErr.message}`);
         continue;
+      }
+
+      // Upload attachments to storage and record metadata on the message
+      if (msg.attachments.length && saved?.id) {
+        const metas: AttachmentMeta[] = [];
+        for (const att of msg.attachments) {
+          const meta = await uploadAttachment(
+            threadId,
+            att.filename,
+            att.content,
+            att.contentType
+          );
+          if (meta) metas.push(meta);
+        }
+        if (metas.length) {
+          await supabaseAdmin
+            .from("email_messages")
+            .update({ attachments: metas })
+            .eq("id", saved.id);
+        }
       }
 
       await supabaseAdmin

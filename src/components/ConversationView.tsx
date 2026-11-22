@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { EmailMessage, EmailThread, Lead, Quotation } from "@/lib/types";
+import { useEffect, useRef, useState } from "react";
+import type { AttachmentMeta, EmailMessage, EmailThread, Lead, Quotation } from "@/lib/types";
 import { getTemplates, renderTemplate, type TemplateContext } from "@/lib/templates";
 import { createClient } from "@/lib/supabase";
+import RichTextEditor from "@/components/RichTextEditor";
 
 interface Props {
   thread: EmailThread | null;
@@ -12,19 +13,51 @@ interface Props {
   onSent: () => void;
 }
 
+interface OutgoingAttachment {
+  name: string;
+  contentType: string;
+  data: string; // base64
+}
+
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8 MB per file
+
+function escapeHtml(s: string) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function plainTextToHtml(text: string) {
+  return `<div>${escapeHtml(text).replace(/\n/g, "<br>")}</div>`;
+}
+
+function htmlToPlainText(html: string) {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return div.innerText || div.textContent || "";
+}
+
+function formatSize(bytes?: number) {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export default function ConversationView({ thread, emails, lead, onSent }: Props) {
   const supabase = createClient();
-  const [reply, setReply] = useState("");
+  const [replyHtml, setReplyHtml] = useState("");
   const [subject, setSubject] = useState("");
   const [sending, setSending] = useState(false);
   const [latestQuote, setLatestQuote] = useState<Quotation | null>(null);
+  const [outgoingFiles, setOutgoingFiles] = useState<OutgoingAttachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const templates = getTemplates();
 
   useEffect(() => {
     setSubject(thread ? `Re: ${thread.subject}` : "");
-    setReply("");
+    setReplyHtml("");
     setLatestQuote(null);
+    setOutgoingFiles([]);
   }, [thread?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -33,6 +66,7 @@ export default function ConversationView({ thread, emails, lead, onSent }: Props
       .from("quotations")
       .select("*")
       .eq("lead_id", lead.id)
+      .order("is_active", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(1)
       .then(({ data }) => setLatestQuote(((data as Quotation[] | null) ?? [])[0] ?? null));
@@ -40,7 +74,7 @@ export default function ConversationView({ thread, emails, lead, onSent }: Props
 
   if (!thread) {
     return (
-      <section className="flex-1 flex items-center justify-center bg-slate-50">
+      <section className="flex-1 flex items-center justify-center bg-slate-100">
         <div className="text-center text-slate-400">
           <div className="text-5xl mb-3">✉️</div>
           <p className="text-sm">Select a conversation to read and reply</p>
@@ -58,17 +92,38 @@ export default function ConversationView({ thread, emails, lead, onSent }: Props
     mandays: latestQuote?.mandays,
     totalAmount: latestQuote?.total_amount,
     quoteNumber: latestQuote?.quote_number,
-    quoteLink: latestQuote?.approval_token
-      ? `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/quotes/accept?token=${latestQuote.approval_token}`
-      : undefined,
   });
 
   const applyTemplate = (id: string) => {
     const rendered = renderTemplate(id, buildContext());
     if (rendered) {
       setSubject(rendered.subject);
-      setReply(rendered.body);
+      setReplyHtml(plainTextToHtml(rendered.body));
     }
+  };
+
+  const onPickFiles = (files: FileList | null) => {
+    if (!files) return;
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        alert(`${file.name} exceeds the 8 MB limit`);
+        continue;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        setOutgoingFiles((prev) => [
+          ...prev,
+          {
+            name: file.name,
+            contentType: file.type || "application/octet-stream",
+            data: dataUrl.split(",")[1] ?? "",
+          },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const payload = () => ({
@@ -76,11 +131,18 @@ export default function ConversationView({ thread, emails, lead, onSent }: Props
     leadId: lead?.id,
     toEmail: lead?.contact_email ?? "",
     subject,
-    bodyText: reply,
+    bodyText: htmlToPlainText(replyHtml),
+    bodyHtml: replyHtml,
+    attachments: outgoingFiles.map(({ name, contentType, data }) => ({
+      name,
+      contentType,
+      data,
+    })),
   });
 
   const sendReply = async (format?: "eml") => {
-    if (!reply.trim() || !lead) return;
+    const text = htmlToPlainText(replyHtml).trim();
+    if (!text || !lead) return;
     setSending(true);
     try {
       const res = await fetch("/api/emails/send", {
@@ -110,7 +172,8 @@ export default function ConversationView({ thread, emails, lead, onSent }: Props
         alert(`Send failed: ${json.error ?? res.status}`);
         return;
       }
-      setReply("");
+      setReplyHtml("");
+      setOutgoingFiles([]);
       onSent();
     } finally {
       setSending(false);
@@ -134,6 +197,7 @@ export default function ConversationView({ thread, emails, lead, onSent }: Props
         )}
         {emails.map((email) => {
           const inbound = email.direction === "inbound";
+          const attachments = (email.attachments ?? []) as AttachmentMeta[];
           return (
             <div key={email.id} className={`flex ${inbound ? "justify-start" : "justify-end"}`}>
               <article
@@ -160,6 +224,24 @@ export default function ConversationView({ thread, emails, lead, onSent }: Props
                 <div className="text-sm whitespace-pre-wrap leading-relaxed">
                   {email.body_text ?? email.body_html}
                 </div>
+                {attachments.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-slate-200/60 flex flex-wrap gap-1.5">
+                    {attachments.map((a) => (
+                      <a
+                        key={a.path}
+                        href={`/api/attachments?path=${encodeURIComponent(a.path)}`}
+                        className={`text-[11px] px-2 py-1 rounded-md border ${
+                          inbound
+                            ? "border-slate-300 text-slate-600 hover:bg-slate-50"
+                            : "border-blue-400 text-blue-50 hover:bg-blue-500"
+                        }`}
+                        title={a.name}
+                      >
+                        📎 {a.name} {formatSize(a.size) && `· ${formatSize(a.size)}`}
+                      </a>
+                    ))}
+                  </div>
+                )}
               </article>
             </div>
           );
@@ -183,31 +265,65 @@ export default function ConversationView({ thread, emails, lead, onSent }: Props
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="text-xs px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 shrink-0"
+              title="Attach files"
+            >
+              📎 Attach
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => onPickFiles(e.target.files)}
+            />
           </div>
+
+          {outgoingFiles.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {outgoingFiles.map((f, i) => (
+                <span
+                  key={`${f.name}-${i}`}
+                  className="text-[11px] bg-slate-100 border border-slate-200 rounded-md px-2 py-1 flex items-center gap-1.5"
+                >
+                  📎 {f.name}
+                  <button
+                    type="button"
+                    className="text-slate-400 hover:text-rose-500"
+                    onClick={() => setOutgoingFiles((p) => p.filter((_, j) => j !== i))}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
           <input
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
             placeholder="Subject"
             className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-          <textarea
-            value={reply}
-            onChange={(e) => setReply(e.target.value)}
+          <RichTextEditor
+            value={replyHtml}
+            onChange={setReplyHtml}
             placeholder="Write a reply or pick a template above — edit freely before sending…"
-            rows={5}
-            className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
           />
           <div className="flex justify-end gap-2">
             <button
               onClick={() => sendReply("eml")}
-              disabled={sending || !reply.trim()}
+              disabled={sending || !htmlToPlainText(replyHtml).trim()}
               className="text-sm px-4 py-2 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
             >
               Download .eml
             </button>
             <button
               onClick={() => sendReply()}
-              disabled={sending || !reply.trim() || !subject.trim()}
+              disabled={sending || !htmlToPlainText(replyHtml).trim() || !subject.trim()}
               className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-50"
             >
               {sending ? "Sending…" : "Send email"}
